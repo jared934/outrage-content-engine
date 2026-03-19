@@ -1,0 +1,128 @@
+{
+  "_meta": {
+    "name": "OUTRAGE — Performance Sync",
+    "description": "Runs daily at noon. Fetches engagement metrics for published posts from social platform APIs. POSTs metrics to /api/webhooks/performance.",
+    "schedule": "0 12 * * *",
+    "n8n_webhook_path": "outrage/performance-sync",
+    "callback_route": "/api/webhooks/performance",
+    "_notes": [
+      "Requires social API credentials per platform.",
+      "Instagram: Facebook Graph API (requires Business account + approved access).",
+      "TikTok: TikTok Display API or TikTok for Business API.",
+      "Twitter/X: Twitter API v2 (Basic tier needed for post metrics).",
+      "For now, these are stubs — replace with real API calls as you set up credentials."
+    ]
+  },
+  "nodes": [
+    {
+      "name": "Schedule (Noon Daily)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 12 * * *" }] }
+      }
+    },
+    {
+      "name": "Webhook Trigger (Manual)",
+      "type": "n8n-nodes-base.webhook",
+      "parameters": { "path": "outrage/performance-sync", "httpMethod": "POST" }
+    },
+    {
+      "name": "Load Recent Post Results",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "post_results",
+        "filters": {
+          "conditions": [
+            { "field": "posted_at", "condition": "gte", "value": "={{ new Date(Date.now() - 604800000).toISOString() }}" },
+            { "field": "external_post_id", "condition": "is not", "value": null }
+          ]
+        },
+        "sort": [{ "field": "posted_at", "direction": "desc" }],
+        "limit": 100
+      },
+      "_comment": "Get posts from last 7 days that have external platform IDs"
+    },
+    {
+      "name": "Split by Platform",
+      "type": "n8n-nodes-base.splitInBatches",
+      "parameters": { "batchSize": 1 }
+    },
+    {
+      "name": "Route by Platform",
+      "type": "n8n-nodes-base.switch",
+      "parameters": {
+        "dataPropertyName": "platform",
+        "rules": [
+          { "value": "instagram", "output": 0 },
+          { "value": "tiktok",    "output": 1 },
+          { "value": "twitter",   "output": 2 }
+        ],
+        "fallbackOutput": 3
+      }
+    },
+    {
+      "name": "Instagram Graph API",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "https://graph.facebook.com/v19.0/{{ $json.external_post_id }}",
+        "queryParameters": {
+          "fields": "like_count,comments_count,reach,impressions,saved,shares",
+          "access_token": "={{ $env.INSTAGRAM_ACCESS_TOKEN }}"
+        }
+      }
+    },
+    {
+      "name": "TikTok API (Stub)",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "// TikTok API requires app review. Use placeholder for now.\nconst post = $input.first().json\nreturn [{ json: { post_result_id: post.id, platform: 'tiktok', views: null, likes: null, comments: null } }]"
+      }
+    },
+    {
+      "name": "Twitter v2 API",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.twitter.com/2/tweets/{{ $json.external_post_id }}",
+        "queryParameters": {
+          "tweet.fields": "public_metrics"
+        },
+        "authentication": "oAuth2"
+      }
+    },
+    {
+      "name": "Normalize Metrics (Code)",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const post = $('Load Recent Post Results').first().json\nconst data = $input.first().json\nconst platform = post.platform\n\nlet metrics = { post_result_id: post.id, platform, external_post_id: post.external_post_id, measured_at: new Date().toISOString() }\n\nif (platform === 'instagram') {\n  metrics.likes       = data.like_count || null\n  metrics.comments    = data.comments_count || null\n  metrics.reach       = data.reach || null\n  metrics.impressions = data.impressions || null\n  metrics.saves       = data.saved || null\n  metrics.shares      = data.shares || null\n  if (metrics.reach) metrics.engagement_rate = ((metrics.likes + metrics.comments) / metrics.reach * 100).toFixed(2)\n} else if (platform === 'twitter') {\n  const pm = data.data?.public_metrics || {}\n  metrics.likes    = pm.like_count    || null\n  metrics.comments = pm.reply_count   || null\n  metrics.shares   = pm.retweet_count || null\n  metrics.views    = pm.impression_count || null\n}\n\nreturn [{ json: metrics }]"
+      }
+    },
+    {
+      "name": "Collect All Metrics",
+      "type": "n8n-nodes-base.aggregate",
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "destinationFieldName": "metrics"
+      }
+    },
+    {
+      "name": "POST to Performance Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_BASE_URL }}/api/webhooks/performance",
+        "headers": { "x-webhook-secret": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+        "bodyType": "json",
+        "body": {
+          "org_id":  "={{ $('Load Recent Post Results').first()?.json?.org_id }}",
+          "run_id":  "={{ $('Webhook Trigger (Manual)').first()?.json?.body?.run_id || null }}",
+          "status":  "success",
+          "items_processed": "={{ $json.metrics.length }}",
+          "metrics": "={{ $json.metrics }}"
+        }
+      }
+    }
+  ]
+}

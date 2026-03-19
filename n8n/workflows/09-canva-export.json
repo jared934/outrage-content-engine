@@ -1,0 +1,94 @@
+{
+  "_meta": {
+    "name": "OUTRAGE — Canva Export",
+    "description": "Triggered from the UI. Calls Canva Connect API to create a design from a content variant or trend cluster. POSTs design URLs to /api/webhooks/canva.",
+    "n8n_webhook_path": "outrage/canva-export",
+    "callback_route": "/api/webhooks/canva",
+    "required_env": ["CANVA_CLIENT_ID", "CANVA_CLIENT_SECRET"],
+    "_notes": [
+      "Canva Connect API requires OAuth2 setup.",
+      "First run: user must authorize via /api/auth/canva OAuth flow.",
+      "n8n uses the stored access token to call Canva API.",
+      "Alternative: use Canva's 'Create with Canva' button (simpler, no API key needed).",
+      "See: https://www.canva.com/developers/docs/connect/"
+    ]
+  },
+  "nodes": [
+    {
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "parameters": {
+        "path": "outrage/canva-export",
+        "httpMethod": "POST"
+      }
+    },
+    {
+      "name": "Load Variant or Cluster",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body\nreturn [{ json: {\n  cluster_id: body.cluster_id || null,\n  variant_id: body.variant_id || null,\n  platform:   body.platform || 'instagram',\n  org_id:     body.org_id,\n  run_id:     body.run_id || null\n}}]"
+      }
+    },
+    {
+      "name": "Load Content Variant",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "get",
+        "tableId": "content_variants",
+        "id": "={{ $json.variant_id }}"
+      }
+    },
+    {
+      "name": "Load Cluster for Context",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "get",
+        "tableId": "trend_clusters",
+        "id": "={{ $json.cluster_id || $('Load Content Variant').first().json?.cluster_id }}"
+      }
+    },
+    {
+      "name": "Build Canva Design Payload",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const variant = $('Load Content Variant').first()?.json\nconst cluster = $('Load Cluster for Context').first()?.json\nconst platform = $('Load Variant or Cluster').first().json.platform\n\nconst platformDimensions = {\n  instagram:  { width: 1080, height: 1080 },\n  tiktok:     { width: 1080, height: 1920 },\n  twitter:    { width: 1200, height: 675 },\n  all:        { width: 1080, height: 1080 }\n}\n\nconst dims = platformDimensions[platform] || platformDimensions.instagram\n\nreturn [{ json: {\n  design_title: `${cluster?.title || variant?.caption || 'OUTRAGE'} — ${platform}`,\n  width:  dims.width,\n  height: dims.height,\n  content: variant?.caption || variant?.body || cluster?.title || '',\n  hashtags: (variant?.hashtags || cluster?.keywords || []).slice(0, 10).map(h => `#${h}`).join(' ')\n}}]"
+      }
+    },
+    {
+      "name": "Canva Create Design (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.canva.com/rest/v1/designs",
+        "authentication": "oAuth2",
+        "bodyType": "json",
+        "body": {
+          "design_type": {
+            "type": "preset",
+            "name": "={{ $json.platform === 'tiktok' ? 'TikTok Post' : $json.platform === 'twitter' ? 'Twitter Post' : 'Instagram Post' }}"
+          },
+          "title": "={{ $json.design_title }}"
+        }
+      },
+      "_comment": "Requires Canva OAuth2 credential in n8n. See: https://www.canva.com/developers/docs/connect/quick-start/"
+    },
+    {
+      "name": "Extract Design URLs",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const canvaResponse = $input.first().json\nconst meta = $('Build Canva Design Payload').first().json\nconst source = $('Load Variant or Cluster').first().json\n\nreturn [{ json: {\n  org_id:       source.org_id,\n  run_id:       source.run_id,\n  status:       'success',\n  items_processed: 1,\n  exports: [{\n    cluster_id:   source.cluster_id,\n    variant_id:   source.variant_id,\n    design_name:  meta.design_title,\n    design_url:   canvaResponse.design?.url || canvaResponse.url,\n    edit_url:     canvaResponse.design?.edit_url || canvaResponse.edit_url,\n    preview_url:  canvaResponse.design?.thumbnail?.url || null,\n    platform:     source.platform\n  }]\n}}]"
+      }
+    },
+    {
+      "name": "POST to Canva Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_BASE_URL }}/api/webhooks/canva",
+        "headers": { "x-webhook-secret": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+        "bodyType": "json",
+        "body": "={{ $json }}"
+      }
+    }
+  ]
+}

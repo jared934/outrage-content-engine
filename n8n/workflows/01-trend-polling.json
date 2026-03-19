@@ -1,0 +1,151 @@
+{
+  "_meta": {
+    "name": "OUTRAGE — Trend Polling",
+    "description": "Polls all active sources every 30 minutes and pushes items to /api/webhooks/ingest",
+    "schedule": "*/30 * * * *",
+    "n8n_webhook_path": "outrage/trend-polling",
+    "callback_route": "/api/webhooks/ingest"
+  },
+  "nodes": [
+    {
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [250, 300],
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 30 }] }
+      }
+    },
+    {
+      "name": "Webhook Trigger (Manual)",
+      "type": "n8n-nodes-base.webhook",
+      "position": [250, 450],
+      "parameters": {
+        "path": "outrage/trend-polling",
+        "authentication": "headerAuth",
+        "headerName": "Authorization",
+        "headerValue": "={{ 'Bearer ' + $env.N8N_WEBHOOK_SECRET }}"
+      }
+    },
+    {
+      "name": "Load Active Sources",
+      "type": "n8n-nodes-base.supabase",
+      "position": [450, 375],
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "sources",
+        "filters": {
+          "conditions": [{ "field": "status", "condition": "eq", "value": "active" }]
+        }
+      },
+      "_comment": "Returns rows from sources table. Filter source_type NOT IN ('tiktok','instagram','twitter') — those are handled by Apify nodes."
+    },
+    {
+      "name": "Split Into Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [650, 375],
+      "parameters": { "batchSize": 1 }
+    },
+    {
+      "name": "Route by Source Type",
+      "type": "n8n-nodes-base.switch",
+      "position": [850, 375],
+      "parameters": {
+        "dataPropertyName": "source_type",
+        "rules": [
+          { "value": "rss",           "output": 0 },
+          { "value": "google_news",   "output": 0 },
+          { "value": "google_trends", "output": 1 },
+          { "value": "reddit",        "output": 2 },
+          { "value": "youtube_rss",   "output": 0 },
+          { "value": "youtube",       "output": 3 },
+          { "value": "competitor",    "output": 0 }
+        ]
+      }
+    },
+    {
+      "name": "Fetch RSS/Google News",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1050, 250],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.config.url }}",
+        "responseFormat": "text"
+      }
+    },
+    {
+      "name": "Parse RSS",
+      "type": "n8n-nodes-base.xml",
+      "position": [1250, 250],
+      "parameters": { "operation": "toJson" }
+    },
+    {
+      "name": "Fetch Google Trends",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1050, 375],
+      "parameters": {
+        "method": "GET",
+        "url": "https://trends.google.com/trends/trendingsearches/daily/rss?geo={{ $json.config.geo || 'US' }}",
+        "responseFormat": "text"
+      }
+    },
+    {
+      "name": "Fetch Reddit",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1050, 500],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.reddit.com/r/{{ $json.config.subreddit }}/hot.json?limit={{ $json.config.limit || 25 }}",
+        "headers": { "User-Agent": "OutrageContentEngine/1.0" },
+        "responseFormat": "json"
+      }
+    },
+    {
+      "name": "Fetch YouTube Trending",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1050, 625],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/youtube/v3/videos",
+        "queryParameters": {
+          "part": "snippet,statistics",
+          "chart": "mostPopular",
+          "regionCode": "US",
+          "maxResults": "25",
+          "key": "={{ $env.YOUTUBE_API_KEY }}"
+        }
+      }
+    },
+    {
+      "name": "Normalize Items (Code)",
+      "type": "n8n-nodes-base.code",
+      "position": [1450, 375],
+      "parameters": {
+        "jsCode": "// See: normalize-items.js helper (inline below)\n// Map source-specific shapes to AdapterItem shape\n// Required fields: external_id, title\n// See lib/ingestion/normalize.ts for reference implementation\nconst items = []\nfor (const item of $input.all()) {\n  const raw = item.json\n  // ... normalize per source type\n  items.push({\n    external_id: raw.id || require('crypto').createHash('sha256').update(raw.url || raw.title).digest('hex').slice(0, 32),\n    title: raw.title || raw.name,\n    url: raw.url || raw.link,\n    author: raw.author || raw.channel || null,\n    published_at: raw.published || raw.created_at || new Date().toISOString(),\n    raw_data: raw\n  })\n}\nreturn items.map(i => ({ json: i }))"
+      }
+    },
+    {
+      "name": "Push to Ingest Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [1650, 375],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_BASE_URL }}/api/webhooks/ingest",
+        "authentication": "headerAuth",
+        "headers": {
+          "x-webhook-secret": "={{ $env.N8N_WEBHOOK_SECRET }}"
+        },
+        "bodyType": "json",
+        "body": {
+          "source_id": "={{ $('Load Active Sources').item.json.id }}",
+          "items": "={{ $input.all().map(i => i.json) }}"
+        }
+      }
+    }
+  ],
+  "_setup_notes": [
+    "1. Set credentials: Supabase API (URL + service role key)",
+    "2. Set env vars: N8N_WEBHOOK_SECRET, APP_BASE_URL, YOUTUBE_API_KEY (optional)",
+    "3. Activate the Schedule Trigger node",
+    "4. Test with the Webhook Trigger (Manual) first"
+  ]
+}

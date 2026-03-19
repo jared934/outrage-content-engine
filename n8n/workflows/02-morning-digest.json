@@ -1,0 +1,90 @@
+{
+  "_meta": {
+    "name": "OUTRAGE — Morning Digest",
+    "description": "Runs at 7am daily. Summarizes top trends and content ideas. POSTs to /api/webhooks/digest.",
+    "schedule": "0 7 * * *",
+    "n8n_webhook_path": "outrage/morning-digest",
+    "callback_route": "/api/webhooks/digest"
+  },
+  "nodes": [
+    {
+      "name": "Schedule (7am)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 7 * * *" }]
+        }
+      }
+    },
+    {
+      "name": "Webhook Trigger (Manual)",
+      "type": "n8n-nodes-base.webhook",
+      "parameters": {
+        "path": "outrage/morning-digest",
+        "authentication": "headerAuth"
+      }
+    },
+    {
+      "name": "Get Top Clusters (Last 24h)",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "trend_clusters",
+        "filters": {
+          "conditions": [
+            { "field": "status", "condition": "in", "value": "active,hot" },
+            { "field": "updated_at", "condition": "gte", "value": "={{ new Date(Date.now() - 86400000).toISOString() }}" }
+          ]
+        },
+        "sort": [{ "field": "overall_score", "direction": "desc" }],
+        "limit": 10
+      }
+    },
+    {
+      "name": "Get Top Ideas (Last 24h)",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "content_ideas",
+        "filters": {
+          "conditions": [
+            { "field": "created_at", "condition": "gte", "value": "={{ new Date(Date.now() - 86400000).toISOString() }}" }
+          ]
+        },
+        "sort": [{ "field": "confidence", "direction": "desc" }],
+        "limit": 5
+      }
+    },
+    {
+      "name": "Get Stats",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "trend_clusters",
+        "filters": {
+          "conditions": [
+            { "field": "status", "condition": "neq", "value": "archived" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Build Digest (Code)",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const clusters = $('Get Top Clusters (Last 24h)').all().map(i => i.json)\nconst ideas    = $('Get Top Ideas (Last 24h)').all().map(i => i.json)\nconst allActive = $('Get Stats').all().map(i => i.json)\n\nconst yesterday = new Date(Date.now() - 86400000).toISOString()\nconst newSinceYesterday = allActive.filter(c => c.created_at >= yesterday).length\nconst hotCount = allActive.filter(c => c.status === 'hot').length\nconst avgScore = allActive.reduce((s, c) => s + (c.overall_score || 0), 0) / (allActive.length || 1)\n\nreturn [{\n  json: {\n    org_id: $('Webhook Trigger (Manual)').first()?.json?.org_id || clusters[0]?.org_id,\n    run_id: $('Webhook Trigger (Manual)').first()?.json?.run_id || null,\n    status: 'success',\n    items_processed: clusters.length,\n    digest: {\n      date: new Date().toISOString().split('T')[0],\n      top_clusters: clusters.map(c => ({\n        cluster_id:    c.id,\n        title:         c.title,\n        overall_score: c.overall_score || 0,\n        item_count:    c.item_count || 0,\n        top_keywords:  (c.keywords || []).slice(0, 5)\n      })),\n      top_ideas: ideas.map(i => ({\n        idea_id:  i.id,\n        title:    i.content?.slice(0, 80) || '',\n        type:     i.type,\n        platform: i.platform\n      })),\n      stats: {\n        total_clusters:       allActive.length,\n        new_since_yesterday:  newSinceYesterday,\n        avg_score:            Math.round(avgScore),\n        hot_count:            hotCount\n      }\n    }\n  }\n}]"
+      }
+    },
+    {
+      "name": "POST Digest Callback",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_BASE_URL }}/api/webhooks/digest",
+        "headers": { "x-webhook-secret": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+        "bodyType": "json",
+        "body": "={{ $json }}"
+      }
+    }
+  ]
+}

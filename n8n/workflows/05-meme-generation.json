@@ -1,0 +1,106 @@
+{
+  "_meta": {
+    "name": "OUTRAGE — Meme Generation",
+    "description": "Triggered from Meme Studio or high-scoring clusters. Uses imgflip + OpenAI to generate meme captions. POSTs to /api/webhooks/meme.",
+    "n8n_webhook_path": "outrage/meme-generation",
+    "callback_route": "/api/webhooks/meme",
+    "required_env": ["OPENAI_API_KEY", "IMGFLIP_USERNAME", "IMGFLIP_PASSWORD"]
+  },
+  "nodes": [
+    {
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "parameters": {
+        "path": "outrage/meme-generation",
+        "httpMethod": "POST"
+      }
+    },
+    {
+      "name": "Load Cluster",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "get",
+        "tableId": "trend_clusters",
+        "id": "={{ $json.body.cluster_id }}"
+      }
+    },
+    {
+      "name": "Load Active Meme Templates",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "meme_templates",
+        "filters": {
+          "conditions": [{ "field": "is_active", "condition": "eq", "value": true }]
+        },
+        "sort": [{ "field": "usage_count", "direction": "asc" }],
+        "limit": 10
+      },
+      "_comment": "Pick least-used templates to avoid repetition"
+    },
+    {
+      "name": "OpenAI — Generate Captions",
+      "type": "n8n-nodes-base.openAi",
+      "parameters": {
+        "operation": "complete",
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "user",
+              "content": "={{ 'Generate 3 viral meme captions for this trending topic: \"' + $(\\'Load Cluster\\').first().json.title + '\"\\nKeywords: ' + ($(\\'Load Cluster\\').first().json.keywords || []).slice(0,5).join(\\', \\') + '\\n\\nReturn JSON: [{\"template_name\":\"...\",\"caption\":\"...\",\"top_text\":\"...\",\"bottom_text\":\"...\",\"vibe\":\"...\"}]' }}"
+            }
+          ]
+        },
+        "options": { "temperature": 0.9, "responseFormat": "json_object" }
+      }
+    },
+    {
+      "name": "Parse + Select Template",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const cluster   = $('Load Cluster').first().json\nconst templates = $('Load Active Meme Templates').all().map(i => i.json)\nconst raw       = $('OpenAI — Generate Captions').first().json\n\nlet captions = []\ntry {\n  const content = raw.message?.content || raw.choices?.[0]?.message?.content || '[]'\n  captions = JSON.parse(content)\n  if (!Array.isArray(captions)) captions = captions.memes || []\n} catch(e) { captions = [] }\n\nconst memes = captions.map((cap, i) => ({\n  cluster_id:   cluster.id,\n  template_id:  templates[i % templates.length]?.id || null,\n  caption:      cap.caption,\n  top_text:     cap.top_text || '',\n  bottom_text:  cap.bottom_text || '',\n  ai_prompt:    `meme for: ${cluster.title}`,\n  imgflip_template_id: templates[i % templates.length]?.imgflip_id || null\n}))\n\nreturn [{\n  json: {\n    org_id:   cluster.org_id,\n    run_id:   $('Webhook Trigger').first().json.body.run_id,\n    status:   'success',\n    memes,\n    cluster_id: cluster.id\n  }\n}]"
+      }
+    },
+    {
+      "name": "Generate imgflip Images",
+      "type": "n8n-nodes-base.splitInBatches",
+      "parameters": { "batchSize": 1 }
+    },
+    {
+      "name": "imgflip API",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.imgflip.com/caption_image",
+        "bodyType": "form",
+        "body": {
+          "template_id": "={{ $json.imgflip_template_id || '181913649' }}",
+          "username":    "={{ $env.IMGFLIP_USERNAME }}",
+          "password":    "={{ $env.IMGFLIP_PASSWORD }}",
+          "text0":       "={{ $json.top_text }}",
+          "text1":       "={{ $json.bottom_text }}"
+        }
+      },
+      "_comment": "Optional. imgflip free tier watermarks images. Skip if using DALL-E."
+    },
+    {
+      "name": "Merge imgflip URLs",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "// Merge imgflip URL back into meme objects\nconst meme = $input.first().json\nconst imgflipResult = $('imgflip API').first()?.json\nif (imgflipResult?.success) {\n  meme.imgflip_url = imgflipResult.data?.url\n}\nreturn [{ json: meme }]"
+      }
+    },
+    {
+      "name": "POST to Meme Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_BASE_URL }}/api/webhooks/meme",
+        "headers": { "x-webhook-secret": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+        "bodyType": "json",
+        "body": "={{ $json }}"
+      }
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "_meta": {
+    "name": "OUTRAGE — Cluster Related Stories",
+    "description": "Runs hourly. Groups recent source_items into trend_clusters using keyword overlap. POSTs cluster data to /api/webhooks/cluster.",
+    "schedule": "0 * * * *",
+    "n8n_webhook_path": "outrage/cluster-stories",
+    "callback_route": "/api/webhooks/cluster"
+  },
+  "nodes": [
+    {
+      "name": "Schedule (Hourly)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": { "interval": [{ "field": "hours", "hoursInterval": 1 }] }
+      }
+    },
+    {
+      "name": "Webhook Trigger (Manual)",
+      "type": "n8n-nodes-base.webhook",
+      "parameters": { "path": "outrage/cluster-stories", "httpMethod": "POST" }
+    },
+    {
+      "name": "Load Unprocessed Items (Last 2h)",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "source_items",
+        "filters": {
+          "conditions": [
+            { "field": "cluster_id", "condition": "is", "value": null },
+            { "field": "created_at", "condition": "gte", "value": "={{ new Date(Date.now() - 7200000).toISOString() }}" }
+          ]
+        },
+        "limit": 200
+      }
+    },
+    {
+      "name": "Group by Keyword Overlap (Code)",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "// Simple keyword-overlap clustering\n// For production: use cosine similarity or call OpenAI embeddings\nconst items = $input.all().map(i => i.json)\n\n// Build clusters by finding items with >= 2 shared keywords\nconst clusters = []\nconst assigned = new Set()\n\nfor (let i = 0; i < items.length; i++) {\n  if (assigned.has(items[i].id)) continue\n  \n  const seed = items[i]\n  const seedKw = new Set((seed.keywords || []).map(k => k.toLowerCase()))\n  if (seedKw.size === 0) continue\n  \n  const group = [seed]\n  assigned.add(seed.id)\n  \n  for (let j = i + 1; j < items.length; j++) {\n    if (assigned.has(items[j].id)) continue\n    const otherKw = (items[j].keywords || []).map(k => k.toLowerCase())\n    const shared  = otherKw.filter(k => seedKw.has(k))\n    if (shared.length >= 2) {\n      group.push(items[j])\n      assigned.add(items[j].id)\n    }\n  }\n  \n  if (group.length >= 2) {\n    // Aggregate keywords\n    const allKw = group.flatMap(it => it.keywords || [])\n    const kwFreq = {}\n    allKw.forEach(k => { kwFreq[k] = (kwFreq[k] || 0) + 1 })\n    const topKw = Object.entries(kwFreq).sort((a,b) => b[1]-a[1]).slice(0,10).map(([k]) => k)\n    \n    clusters.push({\n      title:           topKw.slice(0,3).join(' + '),\n      keywords:        topKw,\n      entities:        {},\n      source_item_ids: group.map(it => it.id),\n      item_count:      group.length,\n      velocity:        group.length,  // items in last 2h = velocity proxy\n      org_id:          seed.org_id\n    })\n  }\n}\n\nreturn clusters.map(c => ({ json: c }))"
+      }
+    },
+    {
+      "name": "If Has Clusters",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "number": [{ "value1": "={{ $input.all().length }}", "operation": "larger", "value2": 0 }]
+        }
+      }
+    },
+    {
+      "name": "POST to Cluster Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_BASE_URL }}/api/webhooks/cluster",
+        "headers": { "x-webhook-secret": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+        "bodyType": "json",
+        "body": {
+          "org_id":   "={{ $input.all()[0]?.json?.org_id }}",
+          "run_id":   "={{ $('Webhook Trigger (Manual)').first()?.json?.body?.run_id || null }}",
+          "status":   "success",
+          "clusters": "={{ $input.all().map(i => i.json) }}"
+        }
+      }
+    }
+  ]
+}

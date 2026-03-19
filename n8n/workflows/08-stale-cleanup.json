@@ -1,0 +1,108 @@
+{
+  "_meta": {
+    "name": "OUTRAGE — Stale Trend Cleanup",
+    "description": "Runs at 2am daily. Archives trend_clusters with no new items in 48+ hours and marks declining ones. POSTs stats to /api/webhooks/cleanup.",
+    "schedule": "0 2 * * *",
+    "n8n_webhook_path": "outrage/stale-cleanup",
+    "callback_route": "/api/webhooks/cleanup"
+  },
+  "nodes": [
+    {
+      "name": "Schedule (2am Daily)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 2 * * *" }] }
+      }
+    },
+    {
+      "name": "Webhook Trigger (Manual)",
+      "type": "n8n-nodes-base.webhook",
+      "parameters": { "path": "outrage/stale-cleanup", "httpMethod": "POST" }
+    },
+    {
+      "name": "Find Stale Clusters",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "trend_clusters",
+        "filters": {
+          "conditions": [
+            { "field": "status", "condition": "in", "value": "new,active,hot" },
+            { "field": "updated_at", "condition": "lte", "value": "={{ new Date(Date.now() - 172800000).toISOString() }}" }
+          ]
+        }
+      },
+      "_comment": "updated_at <= 48h ago = stale"
+    },
+    {
+      "name": "Find Declining Clusters",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "trend_clusters",
+        "filters": {
+          "conditions": [
+            { "field": "status", "condition": "eq", "value": "hot" },
+            { "field": "updated_at", "condition": "lte", "value": "={{ new Date(Date.now() - 86400000).toISOString() }}" }
+          ]
+        }
+      },
+      "_comment": "Hot clusters not updated in 24h are likely declining"
+    },
+    {
+      "name": "Archive Stale",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "update",
+        "tableId": "trend_clusters",
+        "filters": {
+          "conditions": [
+            { "field": "id", "condition": "in", "value": "={{ $('Find Stale Clusters').all().map(i => i.json.id).join(',') }}" }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "status", "fieldValue": "archived" },
+            { "fieldId": "updated_at", "fieldValue": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Mark Declining",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "update",
+        "tableId": "trend_clusters",
+        "filters": {
+          "conditions": [
+            { "field": "id", "condition": "in", "value": "={{ $('Find Declining Clusters').all().map(i => i.json.id).join(',') }}" }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            { "fieldId": "status", "fieldValue": "declining" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "POST Cleanup Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_BASE_URL }}/api/webhooks/cleanup",
+        "headers": { "x-webhook-secret": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+        "bodyType": "json",
+        "body": {
+          "org_id":          "={{ $('Find Stale Clusters').first()?.json?.org_id || 'system' }}",
+          "run_id":          "={{ $('Webhook Trigger (Manual)').first()?.json?.body?.run_id || null }}",
+          "status":          "success",
+          "archived_count":  "={{ $('Find Stale Clusters').all().length }}",
+          "declined_count":  "={{ $('Find Declining Clusters').all().length }}",
+          "cluster_ids":     "={{ [...$('Find Stale Clusters').all(), ...$('Find Declining Clusters').all()].map(i => i.json.id) }}"
+        }
+      }
+    }
+  ]
+}

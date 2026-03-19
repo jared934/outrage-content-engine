@@ -1,0 +1,102 @@
+{
+  "_meta": {
+    "name": "OUTRAGE — Urgent Alert Detection",
+    "description": "Runs every 15 minutes. Evaluates alert_rules against recent trend_clusters. POSTs matched alerts to /api/webhooks/alert.",
+    "schedule": "*/15 * * * *",
+    "n8n_webhook_path": "outrage/urgent-alert",
+    "callback_route": "/api/webhooks/alert"
+  },
+  "nodes": [
+    {
+      "name": "Schedule (Every 15min)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 15 }] }
+      }
+    },
+    {
+      "name": "Load Alert Rules",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "alert_rules",
+        "filters": {
+          "conditions": [{ "field": "enabled", "condition": "eq", "value": true }]
+        }
+      }
+    },
+    {
+      "name": "Load Hot/Active Clusters (Last 2h)",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "trend_clusters",
+        "filters": {
+          "conditions": [
+            { "field": "status", "condition": "in", "value": "new,active,hot" },
+            { "field": "updated_at", "condition": "gte", "value": "={{ new Date(Date.now() - 7200000).toISOString() }}" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Evaluate Rules (Code)",
+      "type": "n8n-nodes-base.code",
+      "parameters": {
+        "jsCode": "const rules    = $('Load Alert Rules').all().map(i => i.json)\nconst clusters = $('Load Hot/Active Clusters (Last 2h)').all().map(i => i.json)\n\nconst alerts = []\n\nfor (const rule of rules) {\n  for (const cluster of clusters) {\n    let matched = false\n    let reason  = ''\n\n    if (rule.rule_type === 'score_threshold') {\n      if ((cluster.overall_score || 0) >= (rule.threshold || 75)) {\n        matched = true\n        reason  = `Score ${Math.round(cluster.overall_score)} >= threshold ${rule.threshold}`\n      }\n    }\n\n    if (rule.rule_type === 'keyword_match' && rule.keywords?.length) {\n      const clusterKeywords = (cluster.keywords || []).map(k => k.toLowerCase())\n      const matchedKw = rule.keywords.filter(k => clusterKeywords.includes(k.toLowerCase()))\n      if (matchedKw.length > 0) {\n        matched = true\n        reason  = `Matched keywords: ${matchedKw.join(', ')}`\n      }\n    }\n\n    if (rule.rule_type === 'velocity_spike') {\n      if ((cluster.velocity || 0) >= (rule.velocity_threshold || 10)) {\n        matched = true\n        reason  = `Velocity ${cluster.velocity} >= threshold ${rule.velocity_threshold}`\n      }\n    }\n\n    if (matched) {\n      alerts.push({\n        org_id:     cluster.org_id,\n        cluster_id: cluster.id,\n        rule_id:    rule.id,\n        title:      `Alert: ${rule.name}`,\n        message:    `\"${cluster.title}\" — ${reason}`,\n        severity:   (cluster.overall_score || 0) >= 85 ? 'critical' : 'high'\n      })\n    }\n  }\n}\n\nreturn alerts.map(a => ({ json: a }))"
+      }
+    },
+    {
+      "name": "If Has Alerts",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "number": [{ "value1": "={{ $input.all().length }}", "operation": "larger", "value2": 0 }]
+        }
+      }
+    },
+    {
+      "name": "Check Not Already Notified",
+      "type": "n8n-nodes-base.supabase",
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "notifications",
+        "filters": {
+          "conditions": [
+            { "field": "cluster_id", "condition": "eq", "value": "={{ $json.cluster_id }}" },
+            { "field": "rule_id",    "condition": "eq", "value": "={{ $json.rule_id }}" },
+            { "field": "created_at", "condition": "gte", "value": "={{ new Date(Date.now() - 3600000).toISOString() }}" }
+          ]
+        },
+        "limit": 1
+      },
+      "_comment": "Dedup: skip if same cluster+rule was already alerted in the last hour"
+    },
+    {
+      "name": "If New Alert",
+      "type": "n8n-nodes-base.if",
+      "parameters": {
+        "conditions": {
+          "number": [{ "value1": "={{ $input.all().length }}", "operation": "equal", "value2": 0 }]
+        }
+      }
+    },
+    {
+      "name": "POST Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.APP_BASE_URL }}/api/webhooks/alert",
+        "headers": { "x-webhook-secret": "={{ $env.N8N_WEBHOOK_SECRET }}" },
+        "bodyType": "json",
+        "body": {
+          "cluster_id": "={{ $json.cluster_id }}",
+          "rule_id":    "={{ $json.rule_id }}",
+          "title":      "={{ $json.title }}",
+          "message":    "={{ $json.message }}",
+          "severity":   "={{ $json.severity }}"
+        }
+      }
+    }
+  ]
+}
