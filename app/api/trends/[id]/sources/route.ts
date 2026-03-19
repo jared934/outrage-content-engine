@@ -10,33 +10,54 @@ export async function GET(
 
   const supabase = createServiceClient()
 
-  const { data, error } = await supabase
+  // Fetch cluster items with source details in two queries to avoid FK ambiguity
+  const { data: clusterItems, error } = await supabase
     .from('trend_cluster_items')
-    .select(`
-      relevance_score,
-      source_items (
-        id, title, url, author, published_at, source_id,
-        sources ( name, type )
-      )
-    `)
+    .select('source_item_id, relevance_score')
     .eq('cluster_id', params.id)
     .order('relevance_score', { ascending: false })
     .limit(30)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!clusterItems || clusterItems.length === 0) {
+    return NextResponse.json({ ok: true, items: [] })
+  }
 
-  const items = (data ?? [])
-    .map((row: any) => ({
-      id:             row.source_items?.id,
-      title:          row.source_items?.title,
-      url:            row.source_items?.url,
-      author:         row.source_items?.author,
-      published_at:   row.source_items?.published_at,
-      source_name:    row.source_items?.sources?.name,
-      source_type:    row.source_items?.sources?.type,
-      relevance_score: row.relevance_score,
-    }))
-    .filter((i: any) => i.id && i.title)
+  const sourceItemIds = clusterItems.map((ci) => ci.source_item_id)
+
+  const { data: sourceItems, error: siError } = await supabase
+    .from('source_items')
+    .select('id, title, url, author, published_at, source_id')
+    .in('id', sourceItemIds)
+
+  if (siError) return NextResponse.json({ error: siError.message }, { status: 500 })
+
+  // Get source names
+  const sourceIds = Array.from(new Set((sourceItems ?? []).map((si) => si.source_id).filter(Boolean)))
+  const { data: sources } = sourceIds.length > 0
+    ? await supabase.from('sources').select('id, name, type').in('id', sourceIds)
+    : { data: [] }
+
+  const sourceMap = Object.fromEntries((sources ?? []).map((s) => [s.id, s]))
+  const itemMap = Object.fromEntries((sourceItems ?? []).map((si) => [si.id, si]))
+
+  const items = clusterItems
+    .map((ci) => {
+      const si = itemMap[ci.source_item_id]
+      if (!si || !si.title) return null
+      const src = si.source_id ? sourceMap[si.source_id] : null
+      return {
+        id:              si.id,
+        title:           si.title,
+        url:             si.url ?? null,
+        author:          si.author ?? null,
+        published_at:    si.published_at ?? null,
+        source_name:     src?.name ?? null,
+        source_type:     src?.type ?? null,
+        relevance_score: Number(ci.relevance_score),
+      }
+    })
+    .filter(Boolean)
 
   return NextResponse.json({ ok: true, items })
 }
