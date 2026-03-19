@@ -1,5 +1,5 @@
 import { getOpenAIClient } from '@/lib/openai/client'
-import { createServiceClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/client'
 import type { PunchlineSuggestion, PunchlineRequest, PunchlineResponse, QuickAction } from './meme.types'
 
 const PUNCHLINE_PROMPT_VERSION = '1.0.0'
@@ -83,7 +83,7 @@ export async function generatePunchlines(req: PunchlineRequest): Promise<Punchli
   // If cluster_id provided, fetch topic from DB
   let topic = req.topic
   if (req.cluster_id && !topic) {
-    const supabase = createServiceClient()
+    const supabase = createClient()
     const { data } = await supabase
       .from('trend_clusters')
       .select('title, summary')

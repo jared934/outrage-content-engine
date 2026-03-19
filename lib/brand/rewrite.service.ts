@@ -5,7 +5,7 @@
 // =============================================================================
 
 import { getOpenAIClient, DEFAULT_MODEL } from '@/lib/openai/client'
-import { createServiceClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/client'
 import {
   buildRewriteSystemPrompt,
   buildRewriteUserPrompt,
@@ -37,7 +37,7 @@ function clean(raw: string): string {
 
 async function fetchBrandSettings(orgId: string): Promise<BrandSettingsContext | null> {
   try {
-    const supabase = createServiceClient()
+    const supabase = createClient()
     const { data } = await supabase
       .from('brand_settings')
       .select('name, voice_description, tone_keywords, avoid_keywords, content_pillars')
@@ -109,7 +109,7 @@ export async function rewriteText(req: RewriteRequest): Promise<RewriteResult> {
       const tokens_used        = promptTokens + completionTokens
 
       // Persist to brand_rewrites
-      const supabase = createServiceClient()
+      const supabase = createClient()
       const { data: row, error } = await supabase
         .from('brand_rewrites')
         .insert({
@@ -162,7 +162,7 @@ export async function getRewriteHistory(
   orgId: string,
   filters: { tool?: string; is_saved?: boolean; search?: string; limit?: number } = {},
 ) {
-  const supabase = createServiceClient()
+  const supabase = createClient()
   let query = supabase
     .from('brand_rewrites')
     .select('*')
@@ -184,7 +184,7 @@ export async function getRewriteHistory(
 }
 
 export async function toggleSaveRewrite(id: string, saved: boolean) {
-  const supabase = createServiceClient()
+  const supabase = createClient()
   const { error } = await supabase
     .from('brand_rewrites')
     .update({ is_saved: saved })
@@ -193,7 +193,7 @@ export async function toggleSaveRewrite(id: string, saved: boolean) {
 }
 
 export async function markRewriteAccepted(id: string) {
-  const supabase = createServiceClient()
+  const supabase = createClient()
   const { error } = await supabase
     .from('brand_rewrites')
     .update({ is_accepted: true })
@@ -202,7 +202,7 @@ export async function markRewriteAccepted(id: string) {
 }
 
 export async function deleteRewrite(id: string) {
-  const supabase = createServiceClient()
+  const supabase = createClient()
   const { error } = await supabase
     .from('brand_rewrites')
     .delete()

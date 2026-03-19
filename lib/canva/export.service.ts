@@ -1,4 +1,4 @@
-import { createServiceClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/client'
 import type {
   CanvaExport, CanvaExportPayload, CreateExportRequest, UpdateExportRequest,
   ExportListFilters, CanvaTemplateType, BrandTheme, LinkedAsset,
@@ -10,7 +10,7 @@ import { TEMPLATE_DIMENSIONS } from './canva.types'
 // ---------------------------------------------------------------------------
 
 async function fetchBrandTheme(org_id: string): Promise<BrandTheme> {
-  const supabase = createServiceClient()
+  const supabase = createClient()
 
   const { data } = await supabase
     .from('brand_settings')
@@ -43,7 +43,7 @@ export async function buildPayloadFromIdea(params: {
   org_id:        string
   design_notes?: string | null
 }): Promise<CanvaExportPayload> {
-  const supabase = createServiceClient()
+  const supabase = createClient()
 
   const { data: idea } = await supabase
     .from('content_ideas')
@@ -101,7 +101,7 @@ export async function buildPayloadFromMemeDraft(params: {
   org_id:      string
   design_notes?: string | null
 }): Promise<CanvaExportPayload> {
-  const supabase = createServiceClient()
+  const supabase = createClient()
 
   const { data: draft } = await supabase
     .from('meme_drafts')
@@ -175,7 +175,7 @@ export async function buildBlankPayload(params: {
 // ---------------------------------------------------------------------------
 
 export async function createExport(req: CreateExportRequest): Promise<CanvaExport> {
-  const supabase = createServiceClient()
+  const supabase = createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -200,7 +200,7 @@ export async function createExport(req: CreateExportRequest): Promise<CanvaExpor
 }
 
 export async function updateExport(id: string, org_id: string, updates: UpdateExportRequest): Promise<CanvaExport> {
-  const supabase = createServiceClient()
+  const supabase = createClient()
 
   const patch: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
@@ -237,7 +237,7 @@ export async function updateExport(id: string, org_id: string, updates: UpdateEx
 }
 
 export async function listExports(org_id: string, filters: ExportListFilters = {}): Promise<CanvaExport[]> {
-  const supabase = createServiceClient()
+  const supabase = createClient()
 
   let query = supabase
     .from('canva_exports')
@@ -256,7 +256,7 @@ export async function listExports(org_id: string, filters: ExportListFilters = {
 }
 
 export async function getExport(id: string, org_id: string): Promise<CanvaExport | null> {
-  const supabase = createServiceClient()
+  const supabase = createClient()
 
   const { data } = await supabase
     .from('canva_exports')
@@ -269,7 +269,7 @@ export async function getExport(id: string, org_id: string): Promise<CanvaExport
 }
 
 export async function deleteExport(id: string, org_id: string): Promise<void> {
-  const supabase = createServiceClient()
+  const supabase = createClient()
   const { error } = await supabase
     .from('canva_exports').delete().eq('id', id).eq('org_id', org_id)
   if (error) throw new Error(error.message)

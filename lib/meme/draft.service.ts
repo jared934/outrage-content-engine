@@ -1,4 +1,4 @@
-import { createServiceClient } from '@/lib/supabase/server'
+import { createClient } from '@/lib/supabase/client'
 import type { MemeCanvasState, MemeDraft } from './meme.types'
 
 // ---------------------------------------------------------------------------
@@ -13,7 +13,7 @@ export async function saveDraft(params: {
   cluster_id?: string | null
   draft_id?: string | null
 }): Promise<MemeDraft> {
-  const supabase = createServiceClient()
+  const supabase = createClient()
 
   const payload = {
     org_id:             params.org_id,
@@ -53,7 +53,7 @@ export async function saveDraft(params: {
 // ---------------------------------------------------------------------------
 
 export async function listDrafts(org_id: string, limit = 20): Promise<MemeDraft[]> {
-  const supabase = createServiceClient()
+  const supabase = createClient()
 
   const { data, error } = await supabase
     .from('meme_drafts')
@@ -71,7 +71,7 @@ export async function listDrafts(org_id: string, limit = 20): Promise<MemeDraft[
 // ---------------------------------------------------------------------------
 
 export async function getDraft(id: string, org_id: string): Promise<MemeDraft | null> {
-  const supabase = createServiceClient()
+  const supabase = createClient()
 
   const { data, error } = await supabase
     .from('meme_drafts')
@@ -89,7 +89,7 @@ export async function getDraft(id: string, org_id: string): Promise<MemeDraft | 
 // ---------------------------------------------------------------------------
 
 export async function deleteDraft(id: string, org_id: string): Promise<void> {
-  const supabase = createServiceClient()
+  const supabase = createClient()
 
   const { error } = await supabase
     .from('meme_drafts')
