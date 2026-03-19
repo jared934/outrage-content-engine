@@ -1,8 +1,8 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Lightbulb, Image, Plus, TrendingUp } from 'lucide-react'
-import { useTrend } from '@/hooks/useTrends'
+import { ArrowLeft, Lightbulb, Image, Plus, TrendingUp, ExternalLink, Rss } from 'lucide-react'
+import { useTrend, useClusterSources } from '@/hooks/useTrends'
 import { ScoreBadge } from '@/components/trends/ScoreBadge'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -18,6 +18,7 @@ interface TrendDetailClientProps {
 export function TrendDetailClient({ id }: TrendDetailClientProps) {
   const router = useRouter()
   const { data: trend, isLoading } = useTrend(id)
+  const { data: sources = [], isLoading: sourcesLoading } = useClusterSources(id)
 
   if (isLoading) {
     return (
@@ -66,7 +67,9 @@ export function TrendDetailClient({ id }: TrendDetailClientProps) {
             {trend.category && (
               <Badge variant="accent">{categoryLabel(trend.category)}</Badge>
             )}
-            <span className="text-xs text-zinc-600">{trend.source_count} sources</span>
+            <a href="#sources" className="text-xs text-zinc-500 hover:text-accent transition-colors underline underline-offset-2">
+              {trend.source_count} source{trend.source_count !== 1 ? 's' : ''}
+            </a>
             <span className="text-xs text-zinc-600">First seen {timeAgo(trend.first_seen_at)}</span>
             <span className="text-xs text-zinc-600">Updated {timeAgo(trend.updated_at)}</span>
           </div>
@@ -143,6 +146,83 @@ export function TrendDetailClient({ id }: TrendDetailClientProps) {
           </Button>
         </div>
       </Card>
+
+      {/* Sources */}
+      <div id="sources" className="rounded-xl border border-border bg-surface overflow-hidden scroll-mt-6">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-border bg-surface-raised">
+          <Rss className="h-4 w-4 text-muted" />
+          <span className="font-display font-semibold text-sm text-foreground">Source Articles</span>
+          {!sourcesLoading && (
+            <span className="text-[10px] bg-zinc-800 border border-zinc-700 text-zinc-400 rounded-full px-1.5 font-bold">
+              {sources.length}
+            </span>
+          )}
+        </div>
+
+        <div className="divide-y divide-border">
+          {sourcesLoading ? (
+            Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="px-4 py-3 space-y-1.5">
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-3 w-1/3" />
+              </div>
+            ))
+          ) : sources.length === 0 ? (
+            <div className="px-4 py-8 text-center">
+              <p className="text-sm text-muted">No source articles found for this trend.</p>
+            </div>
+          ) : (
+            sources.map((src) => (
+              <div key={src.id} className="flex items-start gap-3 px-4 py-3 hover:bg-surface-raised transition-colors group">
+                <div className="flex-1 min-w-0">
+                  {src.url ? (
+                    <a
+                      href={src.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm font-medium text-foreground hover:text-accent transition-colors line-clamp-2 leading-snug"
+                    >
+                      {src.title}
+                    </a>
+                  ) : (
+                    <p className="text-sm font-medium text-foreground line-clamp-2 leading-snug">{src.title}</p>
+                  )}
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    {src.source_name && (
+                      <span className="text-[10px] text-zinc-500">{src.source_name}</span>
+                    )}
+                    {src.author && (
+                      <span className="text-[10px] text-zinc-600">by {src.author}</span>
+                    )}
+                    {src.published_at && (
+                      <span className="text-[10px] text-zinc-600">{timeAgo(src.published_at)}</span>
+                    )}
+                    <span className={cn(
+                      'text-[9px] font-medium px-1 py-0.5 rounded border',
+                      src.relevance_score >= 0.8
+                        ? 'bg-accent/10 border-accent/30 text-red-400'
+                        : 'bg-zinc-800 border-zinc-700 text-zinc-500',
+                    )}>
+                      {Math.round(src.relevance_score * 100)}% match
+                    </span>
+                  </div>
+                </div>
+                {src.url && (
+                  <a
+                    href={src.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-shrink-0 text-zinc-700 hover:text-accent transition-colors opacity-0 group-hover:opacity-100 mt-0.5"
+                    title="Open source"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
 
       {/* Actions */}
       <div className="flex gap-2 pb-6">

@@ -37,6 +37,31 @@ export function useTrendStats() {
   })
 }
 
+export interface ClusterSource {
+  id: string
+  title: string
+  url: string | null
+  author: string | null
+  published_at: string | null
+  source_name: string | null
+  source_type: string | null
+  relevance_score: number
+}
+
+export function useClusterSources(clusterId: string) {
+  return useQuery<ClusterSource[]>({
+    queryKey: [...trendKeys.detail(clusterId), 'sources'],
+    queryFn: async () => {
+      const res = await fetch(`/api/trends/${clusterId}/sources`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error ?? 'Failed to load sources')
+      return data.items as ClusterSource[]
+    },
+    enabled: !!clusterId,
+    staleTime: 5 * 60_000,
+  })
+}
+
 export function useUpdateTrendStatus() {
   const qc = useQueryClient()
   return useMutation({

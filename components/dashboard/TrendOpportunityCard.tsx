@@ -114,9 +114,13 @@ export function TrendOpportunityCard({ trend, onIgnore, compact = false }: Trend
               {trend.category && (
                 <span className="text-[10px] text-zinc-500 capitalize">{trend.category}</span>
               )}
-              <span className="text-[10px] text-zinc-600">
+              <Link
+                href={`/trends/${trend.id}#sources`}
+                className="text-[10px] text-zinc-500 hover:text-accent transition-colors underline underline-offset-2"
+                onClick={(e) => e.stopPropagation()}
+              >
                 {trend.source_count} source{trend.source_count !== 1 ? 's' : ''}
-              </span>
+              </Link>
               <span className="text-[10px] text-zinc-600">{timeAgo(trend.updated_at)}</span>
             </div>
           </div>
