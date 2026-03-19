@@ -12,6 +12,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { verifyApiAuth } from '@/lib/n8n/auth'
 import { triggerWorkflow, getRecentRuns } from '@/lib/n8n/trigger.service'
 import { WORKFLOW_REGISTRY } from '@/lib/n8n/workflows'
+import { getAutomationFlags, disabledResponse } from '@/lib/automation/flags'
 import type { WorkflowKey } from '@/lib/n8n/types'
 
 export async function POST(req: NextRequest) {
@@ -66,6 +67,10 @@ export async function POST(req: NextRequest) {
       available: Object.keys(WORKFLOW_REGISTRY),
     }, { status: 400 })
   }
+
+  // Automation gate
+  const flags = await getAutomationFlags(orgId)
+  if (!flags.n8n_enabled) return disabledResponse('n8n')
 
   const result = await triggerWorkflow(workflowKey, {
     orgId,

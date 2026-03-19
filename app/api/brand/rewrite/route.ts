@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient, getSessionUser } from '@/lib/supabase/server'
 import { rewriteText, getRewriteHistory, toggleSaveRewrite, markRewriteAccepted, deleteRewrite } from '@/lib/brand/rewrite.service'
+import { getAutomationFlags, disabledResponse } from '@/lib/automation/flags'
 import type { RewriteRequest, RewriteTool } from '@/lib/brand/rewrite.types'
 
 const VALID_TOOLS: RewriteTool[] = [
@@ -39,6 +40,10 @@ export async function POST(req: NextRequest) {
 
   if (original_text.length > 4000) return NextResponse.json({ error: 'original_text must be 4000 chars or less' }, { status: 400 })
   if (custom_instruction && custom_instruction.length > 300) return NextResponse.json({ error: 'custom_instruction must be 300 chars or less' }, { status: 400 })
+
+  // Automation gate
+  const flags = await getAutomationFlags(org_id)
+  if (!flags.ai_enabled) return disabledResponse('AI')
 
   try {
     const result = await rewriteText({ original_text, tool, org_id, custom_instruction, cluster_id, idea_id, model })

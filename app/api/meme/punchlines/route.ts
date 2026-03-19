@@ -3,6 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient, getSessionUser } from '@/lib/supabase/server'
 import { generatePunchlines } from '@/lib/meme/punchline.service'
+import { getAutomationFlags, disabledResponse } from '@/lib/automation/flags'
 import type { PunchlineRequest, QuickAction } from '@/lib/meme/meme.types'
 
 const VALID_QUICK_ACTIONS: QuickAction[] = [
@@ -35,6 +36,10 @@ export async function POST(req: NextRequest) {
     .eq('user_id', user.id)
     .single()
   if (!membership) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  // Automation gate
+  const flags = await getAutomationFlags(org_id)
+  if (!flags.ai_enabled) return disabledResponse('AI')
 
   if (quick_action && !VALID_QUICK_ACTIONS.includes(quick_action)) {
     return NextResponse.json({ error: `Invalid quick_action` }, { status: 400 })

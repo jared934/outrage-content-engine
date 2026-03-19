@@ -1,10 +1,17 @@
 import { Metadata } from 'next'
 import Link from 'next/link'
-import { Settings, Database, Workflow, Mic2, Bell, Eye, ChevronRight } from 'lucide-react'
+import { Settings, Database, Workflow, Mic2, Bell, Eye, Zap, ChevronRight } from 'lucide-react'
 
 export const metadata: Metadata = { title: 'Settings' }
 
 const SETTINGS_SECTIONS = [
+  {
+    href: '/settings/automation',
+    icon: Zap,
+    title: 'Automation',
+    description: 'Toggle AI token usage and n8n workflow triggers on or off',
+    badge: null,
+  },
   {
     href: '/settings/sources',
     icon: Database,

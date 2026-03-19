@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient, getSessionUser } from '@/lib/supabase/server'
 import { generatePack, MIN_SCORE_TO_GENERATE } from '@/lib/content/content-pack.service'
+import { getAutomationFlags, disabledResponse } from '@/lib/automation/flags'
 import type { GenerateContentPackRequest, OutputStyle } from '@/lib/content/content.types'
 
 export async function POST(req: NextRequest) {
@@ -27,6 +28,10 @@ export async function POST(req: NextRequest) {
   if (!cluster_id || !org_id) {
     return NextResponse.json({ error: 'cluster_id and org_id are required' }, { status: 400 })
   }
+
+  // Automation gate
+  const flags = await getAutomationFlags(org_id)
+  if (!flags.ai_enabled) return disabledResponse('AI')
 
   // Validate output_style if provided
   const validStyles: OutputStyle[] = ['mainstream', 'savage', 'safer', 'editorial', 'deadpan', 'mock_serious']
